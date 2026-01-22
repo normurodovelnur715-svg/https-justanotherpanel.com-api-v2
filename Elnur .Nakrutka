@@ -1,0 +1,121 @@
+import requests
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters
+)
+
+BOT_TOKEN = "8206095710:AAG-8LomIwqO67yVv07d9mDe-yaiERnSyV4"
+PANEL_API_KEY = "3b55fbd2670d27b120c11ca3e95c1ec1"
+PANEL_URL = "https://justanotherpanel.com/api/v2"
+
+# === PANEL FUNCTIONS ===
+def panel_request(data):
+    data["key"] = PANEL_API_KEY
+    r = requests.post(PANEL_URL, data=data)
+    return r.json()
+
+def get_balance():
+    return panel_request({"action": "balance"})
+
+def get_services():
+    return panel_request({"action": "services"})
+
+def add_order(service, link, quantity):
+    return panel_request({
+        "action": "add",
+        "service": service,
+        "link": link,
+        "quantity": quantity
+    })
+
+# === BOT COMMANDS ===
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        ["📋 Xizmatlar", "💰 Balans"],
+        ["🛒 Buyurtma berish"]
+    ]
+    await update.message.reply_text(
+        "🤖 BoostHub SMM Bot\n\n"
+        "Xizmat tanlang 👇",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    )
+
+async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    b = get_balance()
+    await update.message.reply_text(
+        f"💰 Panel balansi:\n{b['balance']} {b['currency']}"
+    )
+
+async def services_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    services = get_services()
+    text = "📋 Mavjud xizmatlar (bir nechta):\n\n"
+    for s in services[:10]:
+        text += (
+            f"🆔 ID: {s['service']}\n"
+            f"📌 {s['name']}\n"
+            f"💵 Narx: {s['rate']} / 1000\n\n"
+        )
+    text += "🛒 Buyurtma berish uchun ID ni bilib oling."
+    await update.message.reply_text(text)
+
+async def order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    await update.message.reply_text("🆔 Xizmat ID sini yuboring:")
+    context.user_data["step"] = "service"
+
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    step = context.user_data.get("step")
+
+    if step == "service":
+        context.user_data["service"] = update.message.text
+        context.user_data["step"] = "link"
+        await update.message.reply_text("🔗 Link yuboring:")
+
+    elif step == "link":
+        context.user_data["link"] = update.message.text
+        context.user_data["step"] = "quantity"
+        await update.message.reply_text("🔢 Miqdorni yuboring:")
+
+    elif step == "quantity":
+        service = context.user_data["service"]
+        link = context.user_data["link"]
+        quantity = update.message.text
+
+        result = add_order(service, link, quantity)
+
+        if "order" in result:
+            await update.message.reply_text(
+                f"✅ Buyurtma qabul qilindi!\n🆔 Order ID: {result['order']}"
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ Xatolik:\n{result}"
+            )
+
+        context.user_data.clear()
+
+# === MAIN ===
+app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.Regex("💰 Balans"), balance_cmd))
+app.add_handler(MessageHandler(filters.Regex("📋 Xizmatlar"), services_cmd))
+app.add_handler(MessageHandler(filters.Regex("🛒 Buyurtma berish"), order_start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+
+app.run_polling()
+CHANNEL_ID = "@bosthub77" 
+
+async def send_order_to_channel(update: Update, order_info: dict):
+    text = (
+        "🛒 Yangi buyurtma!\n"
+        f"Foydalanuvchi: @{update.effective_user.username}\n"
+        f"Xizmat: {order_info['service_name']}\n"
+        f"Miqdor: {order_info['quantity']}\n"
+        f"Link: {order_info['link']}"
+    )
+    await context.bot.send_message(chat_id=CHANNEL_ID, text=text)
